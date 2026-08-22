@@ -144,9 +144,3 @@ pwsh src/build.ps1 -Install   # 빌드 후 BetterDiscord 에 바로 설치
 - 큰 패널 블러는 기본으로 켜져 있습니다. 사양이 낮으면 설정에서
   **"큰 패널도 블러"** 를 끄세요.
 - 라이트 모드는 다크 모드만큼 손보지 못했습니다.
-
----
-
-## 라이선스
-
-MIT — [LICENSE](LICENSE)
