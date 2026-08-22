@@ -1,0 +1,113 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@100..900&family=Noto+Sans+Mono:wght@100..900&display=swap');
+
+/* ── Noto Sans KR 전역 적용 ─────────────────────────────── */
+
+:root {
+	--kr-font: "Noto Sans KR", "Malgun Gothic", "Apple SD Gothic Neo",
+		"Apple Color Emoji", "Segoe UI Emoji", "Twemoji Mozilla", sans-serif;
+	--kr-mono: "Noto Sans Mono", "D2Coding", Consolas, "Courier New", monospace;
+
+	/* 디스코드가 실제로 참조하는 폰트 변수들 (gg sans 대체) */
+	--font-primary: var(--kr-font) !important;
+	--font-display: var(--kr-font) !important;
+	--font-headline: var(--kr-font) !important;
+	--font-code: var(--kr-mono) !important;
+}
+
+/* 변수를 안 쓰고 폰트를 직접 박아둔 요소들까지 덮어쓰기.
+   코드블록·인라인코드는 제외해서 고정폭 유지 */
+/* ⚠️⚠️ 성능: 예전엔 `:not(code):not(pre):not(pre *):not([class*="hljs"])` 로
+   모든 요소의 font-family 를 덮었다. 그건 사실상 **전역 선택자**인데
+   `:not(pre *)` 안에 **자손 결합자**가 들어 있어서, 스타일 재계산마다
+   요소마다 조상을 거슬러 올라가며 검사한다 = 아주 비싸다.
+   실측: 이 규칙이 있을 때 스타일 재계산 평균 **104ms** (바닐라 59ms).
+   → 상속으로 해결한다. 디스코드는 폰트를 `--font-*` 변수로 참조하므로
+     위에서 그 변수를 덮은 것으로 대부분 끝나고, 나머지는 body 상속으로 덮인다.
+   ⚠️ 전역 선택자에 자손 결합자가 들어간 `:not()` 을 다시 넣지 말 것. */
+body,
+button,
+input,
+textarea,
+select,
+[class*="text-"],
+[class*="heading-"] {
+	font-family: var(--kr-font);
+}
+
+code,
+pre,
+pre *,
+[class*="hljs"],
+[class*="monospace"] {
+	font-family: var(--kr-mono);
+}
+
+/* ── 폰트 계층 ───────────────────────────────────────────────
+   실측했을 때 채널명·작성자·버튼·본문이 전부 16px 이고, 자간은 본문만
+   -0.2px 이고 버튼은 normal 이어서 계층이 없고 들쭉날쭉했다.
+
+   디스코드는 타이포에 의미 클래스를 붙인다 (heading-lg/semibold,
+   text-md/medium, text-xs/normal ...). 그 클래스를 훅으로 써서
+   굵기 계층을 한 번에 정리한다. 크기는 디스코드 값을 존중한다.
+   ─────────────────────────────────────────────────────────── */
+
+/* 굵기: 제목 > 강조 > 본문.
+   디스코드 클래스 규칙과 특이도가 같아 !important 없이는 지는 경우가 있다
+   (실측: 채널 헤더 h1 이 w500 으로 남았다). */
+[class^="heading-"],
+[class*=" heading-"],
+h1,
+h2,
+h3 {
+	font-weight: 700 !important;
+	letter-spacing: -0.4px; /* 큰 글자는 더 조여야 덜 벌어져 보인다 */
+}
+
+[class*="heading-"][class*="extrabold"] {
+	font-weight: 800 !important;
+}
+
+[class*="text-"][class*="semibold"] {
+	font-weight: 600;
+}
+
+[class*="text-"][class*="medium"] {
+	font-weight: 500;
+}
+
+[class*="text-"][class*="normal"] {
+	font-weight: 400;
+}
+
+/* 자간: 본문은 살짝 조이고, 작은 글자는 조이지 않는다.
+   한글은 작은 크기에서 자간을 줄이면 글자가 붙어 답답해진다. */
+body,
+[class*="messageContent"],
+[class*="chatContent"] {
+	letter-spacing: -0.2px;
+}
+
+[class*="text-xs"],
+[class*="text-sm"],
+[class*="timestamp"],
+[class*="subtext"] {
+	letter-spacing: 0;
+}
+
+/* 버튼만 자간 normal 이라 튀었다 → 본문과 맞추고 굵기도 준다 */
+button,
+[class*="button_"],
+[role="button"] {
+	letter-spacing: -0.2px;
+	font-weight: 600;
+}
+
+/* 카테고리 헤더는 디스코드가 이미 text-xs/semibold 를 붙이므로
+   위의 [class*="text-"][class*="semibold"] 규칙이 처리한다.
+   ⚠️ [class*="containerDefault_"] [class*="name_"] 로 잡으려 하지 말 것 —
+      채널 이름까지 같이 걸려서 채널명이 w700 로 뭉개진다 (실측 확인). */
+
+/* 굵기 위조 방지 — 가변폰트라 실제 웨이트를 쓰게 함 */
+* {
+	font-synthesis-weight: none;
+}

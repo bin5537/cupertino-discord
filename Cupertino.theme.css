@@ -1,0 +1,1551 @@
+/**
+ * @name Cupertino
+ * @author soobin
+ * @version 6.0.0
+ * @description 디스코드 기본 레이아웃·색감을 그대로 두고 모양만 바꾼다 — 둥글기, 토스 블루 포인트, 헤어라인, 떠 있는 레이어에만 글래스.
+ * @source local
+**/
+
+/* ═══════════════════════════════════════════════════════════════════════
+   설계 원칙 (v6에서 확정)
+
+   ▸ 바꾸는 것: 모양 — 둥글기 / 색 / 재질(글래스) / 경계선 / 스크롤바
+   ▸ 건드리지 않는 것: 레이아웃 수치 — padding / margin / width / height
+
+   왜: v5에서 채널 행 padding·margin, 멤버 행 padding, 유저 목록 width 를
+   임의로 바꿨더니 "부자연스럽다"는 피드백이 나왔다. 디스코드 여백은
+   정보 밀도를 맞춰 설계된 값이고, 한 곳을 건드리면 텍스트 잘림·행 높이·
+   목록 전체 길이가 연쇄로 어긋난다. 그래서 여백은 전부 기본으로 되돌렸다.
+
+   실제로 있었던 문제들
+     · 채널 행 pitch 38 → 41px (행 35개면 100px 넘게 더 차지)
+     · 멤버 행 padding 확대 → 이름이 잘려서 오히려 좁아 보임
+     · 유저 목록 300px → 너무 넓음
+   → 전부 제거. 여백 관련 규칙은 이 파일에 다시 넣지 말 것.
+
+   함정 메모
+     · 클래스 해시(sidebar__5e434)는 업데이트마다 바뀐다 → [class*="prefix_"]
+     · [class*="bar_"] 는 sidebar__5e434 에도 걸린다("bar__" 포함)
+     · 서버 아이콘 모양은 CSS로 못 바꾼다 (childWrapper 가 SVG mask 로 잘림)
+     · 전역 ::-webkit-scrollbar 는 디스코드가 none_ 으로 숨긴 스크롤바를
+       되살려 유령 스크롤바가 자리를 먹는다 → 반드시 예외를 둘 것
+     · 설정 화면은 모달이 아니라 전체화면 레이어(standardSidebarView).
+       글이 많아 글래스를 걸면 읽기 힘들다 → 제외
+     · 이 파일을 통째로 다시 쓰면 BD가 새 애드온으로 보고 비활성화한다
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════
+   0. 토큰
+   ══════════════════════════════════════════════════════════ */
+
+:root {
+	/* 토스 블루 */
+	--t-blue: #3182f6;
+	--t-blue-hover: #1b64da;
+	--t-blue-tint: rgba(49, 130, 246, 0.14);
+	--t-blue-tint-hi: rgba(49, 130, 246, 0.22);
+	--t-blue-ring: rgba(49, 130, 246, 0.28);
+
+	/* 둥글기 — 이 스케일 하나만 쓴다 */
+	--r-xs: 6px; /* 인라인 코드, 작은 배지 */
+	--r-sm: 10px; /* 채널 행, 메뉴 항목, 메시지 */
+	--r-md: 14px; /* 버튼, 인풋, 임베드, 폴더 */
+	--r-lg: 18px; /* 팝오버, 카드, 토스트 */
+	--r-xl: 24px; /* 입력창, 모달 */
+
+	/* 디스코드 자체 곡률 토큰.
+	   ⚠️ --radius-lg 를 크게 올리면 안 된다. 디스코드는 이 토큰을 전체 높이
+	   목록·패널 같은 "거대한 면"에 쓴다 (실측: 1963x1015 리스트, 360x1126
+	   사이드바). 거기에 20px 가 붙으면 모서리만 둥근 이상한 상자가 된다.
+	   → lg 는 md 값으로 눌러둔다. 내 컴포넌트는 위의 --r-* 를 직접 쓴다. */
+	--radius-xs: var(--r-xs);
+	--radius-sm: var(--r-sm);
+	--radius-md: var(--r-md);
+	--radius-lg: var(--r-md);
+
+	/* macOS 헤어라인 · 그림자 */
+	--hair: rgba(255, 255, 255, 0.07);
+	--hair-hi: rgba(255, 255, 255, 0.12);
+	--shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.22);
+	--shadow-md: 0 8px 24px rgba(0, 0, 0, 0.32);
+	--shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.45);
+
+	/* ⚠️ 블러가 되는 곳과 안 되는 곳을 구분해야 한다 (실측 결과).
+
+	   디스코드는 메뉴·툴팁·모달을 transform 으로 위치잡고 애니메이션한다.
+	   조상에 transform 이 있으면 backdrop-filter 의 backdrop 루트가 그 레이어에
+	   갇혀 블러가 CSS 규격상 완전히 무력화된다. 우회 불가.
+	     · 컨텍스트 메뉴/서브메뉴 → layer__529b0        transform  ❌
+	     · 툴팁                  → tooltipLayer_       transform  ❌
+	     · 빠른 이동             → container__8a031    transform  ❌
+	     · BD 토스트             → transform 없음                  ✅
+	   블러 없이 알파만 남으면 뒤 글자가 선명히 비쳐 깨져 보인다.
+	   → 블러 불가 레이어는 "거의 불투명한 패널", 가능한 곳만 진짜 유리. */
+
+	/* ── iOS 26 Liquid Glass 는 3층으로 정의된다 ──────────────
+	   Apple 문서: highlight(빛의 반사·이동) / shadow(전경·배경 분리 깊이) /
+	   illumination(재질이 빛을 통과시키며 밝아지는 성질).
+
+	   내 예전 버전에는 **illumination 이 아예 없었다** — blur+saturate 만
+	   걸어서 "그냥 흐린 회색 판" 이었고, 그래서 티가 안 났다.
+	   backdrop 에 brightness/contrast 를 얹어야 뒤 빛을 머금은 재질로 읽힌다.
+	   어두운 테마에서는 특히 이게 유리/불투명을 가르는 결정적 차이다. */
+	--glass-blur: blur(28px) saturate(185%) brightness(1.42);
+
+	/* 베이스 패널(사이드바/본문/레일)용 — 면적이 커서 brightness 를 낮게.
+	   여기까지 1.42 로 올리면 화면 전체가 들려서 "회색빛" 이 된다. */
+	--glass-blur-base: blur(26px) saturate(155%) brightness(1.18);
+
+	/* 베이스 패널(레일/채널목록/카드/헤더/유저패널)에 실제로 쓰는 블러.
+	   ⚠️ 성능 영향이 가장 큰 항목이다 (실측: 이것 때문에 블러 면적이
+	   화면의 1.01배가 되고 스크롤 프레임 수가 반토막 났다).
+	   그래서 값을 토큰으로 빼서 플러그인 설정("패널 블러")으로 끌 수 있게 한다.
+	   기본은 켜둔다 — 껐을 때 "블러가 많이 사라졌다" 는 피드백을 받았다. */
+	--panel-blur: var(--glass-blur-base);
+
+	/* 헤더·유저패널처럼 얇은 띠 — 아래 컬럼 위에 겹치므로 더 약하게 */
+	--glass-blur-bar: blur(18px) saturate(145%) brightness(1.26);
+
+	/* 블러가 되는 곳 (토스트) — 진짜 유리 */
+	--glass-pop: rgba(24, 25, 28, 0.7);
+
+	/* ── 블러 없이 유리처럼 보이게 (iOS 26 Liquid Glass 방식) ──
+	   블러를 못 쓰는 레이어에서 "유리"를 만드는 3요소:
+	     1) 표면에 그라디언트 틴트를 겹친다 (위가 밝고 아래가 어두움)
+	     2) 위쪽 테두리에 정반사 하이라이트 (빛이 닿는 각)
+	     3) 테두리를 위는 밝게·아래는 어둡게 → 평평한 선이 아니라 유리 두께
+	   여기에 외곽+내부 그림자를 겹쳐 깊이를 만든다. */
+
+	/* CupertinoExtras 플러그인이 레이어의 transform 을 left/top 으로 바꿔
+	   backdrop-filter 를 살려주므로, 여기는 반투명으로 둔다.
+	   플러그인이 꺼지면 블러가 죽어 글자가 비치니 알파를 너무 낮추지 말 것. */
+	/* 플러그인이 레이어 transform 을 풀어 블러가 실제로 작동하므로
+	   알파를 더 낮춰 유리를 살린다. 블러가 뒤 내용을 뭉개주니 글자는 또렷하다. */
+	--panel-pop: rgba(30, 32, 38, 0.6);
+	--panel-modal: rgba(27, 29, 34, 0.7);
+
+	/* 표면에 겹치는 유리 틴트 — 넓은 판용(대각선이 유리 광택으로 읽힌다) */
+	--glass-tint: linear-gradient(
+		155deg,
+		rgba(255, 255, 255, 0.11) 0%,
+		rgba(255, 255, 255, 0.035) 38%,
+		rgba(255, 255, 255, 0.012) 100%
+	);
+
+	/* ⚠️ 얇고 긴 띠(입력창·헤더·유저패널)에는 위 대각 틴트를 쓰면 안 된다.
+	   58px 높이에 155deg 를 걸면 광택이 아니라 **비스듬한 얼룩**으로 보인다
+	   (실제로 입력창이 "글래스가 아니라 이상하다" 는 소리를 들었다).
+	   띠는 위가 밝고 아래가 어두운 세로 그라디언트여야 유리로 읽힌다. */
+	--glass-tint-bar: linear-gradient(
+		180deg,
+		rgba(255, 255, 255, 0.075) 0%,
+		rgba(255, 255, 255, 0.022) 55%,
+		rgba(255, 255, 255, 0.008) 100%
+	);
+
+	/* highlight 층 — 유리 테두리의 정반사.
+	   ⚠️ 굴절의 물리: 빛은 **유리 가운데가 아니라 곡면 테두리에서** 꺾인다.
+	   그래서 판 전체를 왜곡시키는 게 아니라 테두리에만 빛을 몰아줘야
+	   두께 있는 유리로 보인다. 위=직접 반사(밝게),
+	   아래=통과해 되돌아온 빛(아주 약하게), 마지막 inset 글로우=림에 모인 빛. */
+	--glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.28),
+		inset 0 -1px 0 rgba(255, 255, 255, 0.075),
+		inset 1px 0 0 rgba(255, 255, 255, 0.05),
+		inset -1px 0 0 rgba(255, 255, 255, 0.05),
+		inset 0 0 14px rgba(255, 255, 255, 0.05);
+
+	/* shadow 층 — 전경/배경 분리. 넓고 옅은 것 + 좁고 진한 것 두 겹. */
+	--glass-depth: 0 16px 44px rgba(0, 0, 0, 0.5), 0 3px 10px rgba(0, 0, 0, 0.34),
+		0 0 0 0.5px rgba(0, 0, 0, 0.5);
+
+	/* 유리 두께처럼 보이는 테두리 색 */
+	--edge-top: rgba(255, 255, 255, 0.19);
+	--edge-side: rgba(255, 255, 255, 0.09);
+	--edge-bottom: rgba(255, 255, 255, 0.05);
+
+	--glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+
+	/* 선택·강조 채움은 무채색 유리로. 진한 파란 덩어리는 쓰지 않는다. */
+	--fill-hover: rgba(255, 255, 255, 0.07);
+	--fill-selected: rgba(255, 255, 255, 0.11);
+	--fill-focused: rgba(255, 255, 255, 0.14);
+}
+
+.theme-light {
+	--hair: rgba(0, 0, 0, 0.07);
+	--hair-hi: rgba(0, 0, 0, 0.12);
+	--shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.09);
+	--shadow-md: 0 8px 24px rgba(0, 0, 0, 0.12);
+	--shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.18);
+
+	--glass-tint: linear-gradient(155deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.4) 40%, rgba(255, 255, 255, 0.1) 100%);
+	--glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+	--glass-depth: 0 12px 34px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.1);
+	--edge-top: rgba(255, 255, 255, 0.9);
+	--edge-side: rgba(0, 0, 0, 0.1);
+	--edge-bottom: rgba(0, 0, 0, 0.14);
+	--glass-edge: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+
+	--fill-hover: rgba(0, 0, 0, 0.05);
+	--fill-selected: rgba(0, 0, 0, 0.085);
+	--fill-focused: rgba(0, 0, 0, 0.11);
+}
+
+/* ⚠️⚠️ 배경 팔레트는 `.theme-light` **전부**에 주면 안 된다 ─────────────
+   디스코드는 사용자가 **프로필 테마(사용자 지정 색)** 를 쓰면 그 프로필
+   팝오버/모달 서브트리에 `theme-light images-light user-profile-modal-v2`
+   (팝오버는 `user-profile`)를 붙이고, 배경을 `color-mix(in oklab, …)` 로
+   프로필 색에서 **은은하게 틴트**한다.
+
+   내가 `.theme-light` 에 `--panel-pop: rgb(250,250,252)` 같은 순백 팔레트를
+   깔아버려서 그 틴트를 덮고 모달이 **거의 흰색(휘도 250)** 이 됐다.
+   테마를 켠 채/끈 채 A/B 로 재서 확정했다 (바닐라는 밝은 패널이 배너뿐).
+   → 배경 계열 토큰만 `user-profile` 표면에서 제외한다.
+   헤어라인·그림자·틴트 같은 "모양" 토큰은 위 블록에 그대로 둬도 안전하다. */
+.theme-light:not([class*="user-profile"]) {
+	--glass-pop: rgba(252, 252, 254, 0.72);
+	--panel-pop: rgb(250, 250, 252);
+	--panel-modal: rgb(248, 248, 251);
+}
+
+/* 브랜드 색만 토스 블루. 배경 계열 토큰은 손대지 않는다 = 원래 색감 유지 */
+.theme-dark,
+.theme-light,
+.theme-midnight {
+	--background-brand: var(--t-blue);
+	--border-focus: var(--t-blue);
+	--interactive-accent-background-hover: var(--t-blue-hover);
+	--interactive-accent-background-selected: var(--t-blue);
+	--interactive-accent-background-active: var(--t-blue-hover);
+}
+
+/* ══════════════════════════════════════════════════════════
+   1-0. 레이아웃 — 패널을 떼어내 카드로 (gap 시스템)
+
+   refact0r/midnight-discord 가 쓰는 방식을 참고했다: 간격 변수 하나(--gap)로
+   모든 패널에 같은 여백과 곡률을 줘서 "떠 있는 카드"들로 만든다.
+   부분만 바꾸면 어긋나 보이므로 반드시 전 패널에 같이 적용해야 한다.
+
+   --gap 을 8px 로 잡은 이유: 디스코드 새 UI 가 이미 유저 패널을 8px 들여쓴
+   카드로 그린다 (실측: sidebar 433px 안에서 panels 가 417px, x=8).
+   즉 8px 이 디스코드 자체 간격 단위다. 임의 값을 만들지 않고 그 리듬에 맞춘다.
+
+   실측한 셸 구조:
+     base__5e434 (grid)
+     ├ bar_c38106                 상단바 32px
+     └ content__5e434
+        ├ sidebar__5e434 (grid)   433px
+        │  ├ guilds__5e434        72px   서버 레일
+        │  ├ sidebarList__5e434   360px  채널 목록
+        │  └ panels__5e434        유저 패널 (이미 8px 인셋)
+        └ page__5e434             본문 (chat_ > chatContent_ + membersWrap_)
+
+   되돌리려면 이 블록만 지우면 된다.
+   ══════════════════════════════════════════════════════════ */
+
+:root {
+	--gap: 8px;
+}
+
+/* ── 바탕 그라디언트 + 반투명 패널 = 진짜 유리 ─────────────────
+   단색 패널은 뒤에 비칠 게 없어서 유리로 안 읽힌다.
+   base 패널(사이드바/본문)은 메뉴와 달리 transform 조상이 없어서
+   backdrop-filter 가 실제로 작동한다 → 여기서는 진짜 블러가 가능하다.
+
+   예전 두 번의 실패와 다르게 하는 점:
+     · 색조를 넣지 않는다 (그때는 보라/파랑/핑크 블룸 → "이상한 퍼런색")
+     · 패널 톤을 확실하게 준다 (그때는 흰색 알파 0.03 → "흐리멍텅")
+   그라디언트 폭도 좁게 잡아 은은하게만 변하도록 한다.
+   ─────────────────────────────────────────────────────────── */
+
+[class*="base_"],
+[class*="app__"] {
+	background: transparent !important;
+}
+
+#app-mount::before {
+	content: "";
+	position: fixed;
+	inset: 0;
+	z-index: 0;
+	pointer-events: none;
+	/* ⚠️ 유리가 "유리로 안 보이던" 진짜 이유 (실측):
+	   패널색 rgb(19,21,26) 과 이 바탕(#1b1d23~#0a0b0f) 의 밝기 차가 거의 0 이라
+	   알파 0.62 로 비쳐도 비친 게 원래 색과 똑같아서 아무 변화가 없었다.
+	   → 알파를 더 낮추는 대신 **바탕의 밝기 폭을 넓힌다.**
+	   색조는 넣지 않는다 (예전 보라/파랑 블룸 = "이상한 퍼런색" 실패).
+	   순수 무채색 광원 세 개로 위/아래·좌/우 밝기를 다르게 만들면
+	   같은 알파에서도 패널마다 톤이 달라져 유리로 읽힌다.
+	   ⚠️ 사진/이미지는 넣지 않는다 (명시적으로 거부됨). */
+	background:
+		radial-gradient(900px 620px at 10% -8%, rgba(255, 255, 255, 0.075), transparent 62%),
+		radial-gradient(780px 580px at 92% 6%, rgba(255, 255, 255, 0.045), transparent 60%),
+		radial-gradient(1100px 760px at 68% 108%, rgba(255, 255, 255, 0.038), transparent 62%),
+		linear-gradient(163deg, #262a33 0%, #171a21 46%, #0a0b10 100%);
+}
+
+/* 디스코드가 칠하는 패널 배경을 반투명으로 → 뒤 그라디언트가 비친다.
+   알파 0.62 는 글자가 또렷하면서도 톤 변화가 보이는 지점. */
+.theme-dark,
+.theme-midnight {
+	--background-base-lowest: rgba(19, 21, 26, 0.62);
+	--background-base-lower: rgba(23, 25, 31, 0.62);
+	--background-base-low: rgba(27, 29, 35, 0.6);
+	--background-surface-high: rgba(31, 33, 40, 0.66);
+	--background-surface-higher: rgba(35, 37, 45, 0.7);
+}
+
+/* ⚠️ 여기도 `user-profile` 제외 — 프로필 테마 표면의 color-mix 틴트를 덮으면
+   모달 안쪽 패널들이 죄다 순백이 된다 (위 설명 참고). */
+.theme-light:not([class*="user-profile"]) {
+	--background-base-lowest: rgba(250, 250, 252, 0.7);
+	--background-base-lower: rgba(246, 246, 249, 0.7);
+	--background-base-low: rgba(242, 242, 246, 0.68);
+}
+
+/* 카드에 실제 블러 — 여기는 작동한다 */
+/* ⚠️⚠️ 성능: 여기에 backdrop-filter 를 걸지 말 것 ─────────────────
+   실측(벤치): 테마 ON 이면 backdrop-filter 가 11개, 총 블러 면적이
+   **화면의 1.01배**가 되고 스크롤 프레임 수가 177~212 → 107~123 으로
+   거의 반토막 났다 (평균 프레임 11.6~14.3ms → 22.7~23.2ms).
+   1위는 chatContent 1741x1047 = 182만px (화면의 64%).
+
+   그런데 이 큰 패널들이 블러하는 대상은 `#app-mount::before` 의
+   **부드러운 정적 그라디언트뿐**이다. 매끄러운 그라디언트는 블러해도
+   픽셀이 거의 그대로다 = **외관은 같고 비용만 냈다.**
+   → 베이스 패널은 블러 없이 반투명만 쓴다. 잃는 brightness(1.18) 리프트는
+     패널 배경색에 미리 반영해 톤을 맞춘다 (아래 --background-base-* 참고).
+   ⚠️ 다만 "블러가 많이 사라졌다" 는 피드백을 받았으므로 **기본은 켜둔다.**
+   대신 `--panel-blur` 토큰으로 빼서 설정에서 끌 수 있게 했다 (렉이 심하면 OFF).
+   블러가 꼭 필요한 곳은 **뒤에 실제 글자가 있는** 떠 있는 표면
+   (메뉴/팝오버/모달/입력창/툴팁/라이트박스)이다. */
+nav[class*="guilds_"],
+[class*="sidebarList_"],
+[class*="page_"],
+section[class*="panels_"] {
+	-webkit-backdrop-filter: var(--panel-blur);
+	backdrop-filter: var(--panel-blur);
+}
+
+/* ⚠️⚠️ "반투명인데 불투명해 보인다" 의 두 번째 원인 (실측).
+   내가 --background-base-* 를 반투명으로 바꾸자, 그 토큰을 쓰는
+   **중첩된 요소들이 각각** 반투명을 칠하면서 알파가 곱해졌다.
+     · chat_        rgba(19,21,26,0.62)
+     · chatContent  rgba(23,25,31,0.62)  ← 위 요소의 자식
+   두 겹이면 실효 알파 = 1-(0.38×0.38) = 0.86.
+   서버레일은 한 겹(0.62)이라 같은 토큰인데도 훨씬 맑아 보여서
+   컬럼끼리 톤이 어긋나 있었다 ("색감이 아쉽다" 의 일부).
+   → 컬럼마다 **칠하는 층을 하나로** 고정한다. 바깥이 칠하고 안쪽은 비운다. */
+[class*="chatContent"],
+[class*="chat_"] > [class*="content_"],
+[class*="page_"] > [class*="chat_"] [class*="subtitleContainer"] {
+	background-color: transparent !important;
+}
+
+/* 채팅 스크롤러·멤버목록도 자기 배경을 갖지 않는다 (이미 0 이지만 고정) */
+[class*="messagesWrapper"],
+[class*="membersWrap_"],
+[class*="scrollerContent_"] {
+	background-color: transparent !important;
+}
+
+/* ⚠️⚠️ 메시지 영역은 **3겹**으로 칠하고 있었다 (실측) — 채팅이 거의
+   불투명해 보인 결정적 원인:
+     chatContent_ (카드)          rgba(19,21,26,.62)
+     └ wrapper_d852db            rgba(23,25,31,.62)   ← scrollerInner 의 자식
+        └ wrapper_fc8177 cozy_   rgba(23,25,31,.62)   ← 메시지 행 하나하나
+   실효 알파 = 1-(0.38³) ≈ 0.945. 유리가 남아날 수 없다.
+   (바닐라 디스코드는 이 토큰들이 불투명이라 "살짝 밝은 띠" 효과였지만,
+    내가 토큰을 반투명으로 바꾸자 곱해지기만 했다.)
+
+   ⚠️ `[class*="cozy"]` 로 잡으면 안 된다 — 멘션 하이라이트 요소가
+   `message__ cozyMessage__ mentioned__` 라서 같이 걸려 하이라이트가 죽는다.
+   멘션은 자기 색(oklab(… / 0.078))을 쓰므로 건드리면 안 된다.
+   → "wrapper_ 안의 wrapper_" 라는 구조로만 정확히 지목한다. */
+[class*="scrollerInner"] > [class*="wrapper_"],
+[class*="scrollerInner"] > [class*="wrapper_"] > [class*="wrapper_"] {
+	background-color: transparent !important;
+}
+
+/* ⚠️⚠️ "왼쪽만 둥글다" 의 진짜 원인 (실측: 비대칭 곡률은 **하나도 없었다**).
+   멤버 행 `member__5d473 member_c8ffbb` 이 카드와 **똑같은**
+   --background-base-lower(.62) 를 카드 위에 덧칠하고 있었다.
+   바닐라에선 이 토큰이 불투명이라 카드 면과 같은 색 = 안 보이지만,
+   반투명이 되자 0.62 가 0.62 위에 겹쳐 **보일 일이 없는 블록이 드러났다.**
+   그 행은 `margin: 0 0 0 8px` 로 왼쪽만 8px 들여쓰기돼 있어서
+   왼쪽 곡률은 보이고 오른쪽은 카드 테두리에 붙어 각져 보였다.
+   → 행을 투명하게 만들면 블록 자체가 사라진다 (여백은 건드리지 않는다).
+   ⚠️ 호버/선택 하이라이트는 `childContainer__91a9d` 가 자기 색
+   (oklab(… / 0.12))으로 그리므로 `[class*="member_"]` 만 비워도 살아남는다.
+   (`memberInner__` 는 "member_" 를 포함하지 않아 안 걸린다.) */
+[class*="membersWrap_"] [class*="member_"] {
+	background-color: transparent !important;
+}
+
+/* ⚠️ 위 반투명 토큰이 "떠 있는 레이어"까지 흘러들어가면 안 된다.
+   실측: 검색 팝오버의 모달 컨테이너 container__8a031 이
+   rgba(31,33,40,0.66) 을 물려받아 반투명이 됐는데, 그 레이어는
+   transform 때문에 블러가 안 걸려서 뒤 글자가 그대로 비쳤다.
+   → 레이어 안에서는 배경 토큰을 다시 불투명하게 되돌린다. */
+/* ⚠️ 라이트박스는 이 토큰 override 에서도 빼야 한다.
+   컨테이너 배경만 막고 토큰을 그대로 두면, 라이트박스 내부 요소가
+   --background-base-* 를 물려받아 불투명 회색을 칠해서
+   확대 이미지 좌우에 배경 띠가 생긴다 (실제로 그랬다). */
+/* ⚠️⚠️ :has() 를 전부 걷어낸 이유 (실측)
+   채널 전환 4회 기준, 테마가 더하는 비용 1805ms 중 :has() 가 1691ms(94%)였다.
+   원인: 인자가 `[class*="..."]` 인 :has() 는 브라우저가 인덱싱하지 못해,
+   DOM 이 바뀔 때마다 광범위 무효화가 걸린다 (후보 요소가 0개여도 비용이 든다).
+   → 조건 판정은 플러그인(CupertinoExtras)이 data-cup-* 속성으로 해준다.
+     태그는 레이어가 실제로 추가/제거될 때 옵저버 콜백에서 즉시 붙으므로
+     (디바운스 이전) 화면 깜빡임이 없다.
+   ⚠️ 따라서 아래 규칙들은 플러그인이 켜져 있어야 정상 동작한다.
+      플러그인을 끄면 라이트박스(이미지 확대)에 모달 유리가 다시 낄 수 있다.
+   ⚠️ 특이도는 한 군데도 바뀌지 않게 맞췄다 (:not(:has(X)) → :not([data-cup-lb])
+      는 둘 다 속성 1개). 일부러 :not 을 두 번 쓴 곳이 있는데 특이도 유지용이다. */
+[class*="layerContainer_"]:not([data-cup-lb]),
+[role="dialog"]:not([data-cup-lb]),
+[class*="container__8a031"]:not([data-cup-lb]) {
+	--background-base-lowest: rgb(24, 26, 31);
+	--background-base-lower: rgb(27, 29, 35);
+	--background-base-low: rgb(30, 32, 38);
+	--background-surface-high: rgb(33, 35, 42);
+	--background-surface-higher: rgb(37, 39, 47);
+}
+
+/* ⚠️⚠️ 스크림과 라이트박스는 **같은 요소**다 (실측: `scrim__40128 lightbox__40128`).
+   그래서 [class*="lightbox"] 에 background:transparent 를 걸면 어둡게 덮는 층이
+   사라져서 앱이 그대로 비친다 (실제로 그렇게 만들었다).
+   → 이 요소에는 어두운 배경을 명시해준다. 블러까지 얹으면 iOS 식으로
+     뒤가 어둡게 가라앉으면서 은은하게 흐려진다. */
+/* 실질적 불투명으로 덮는다.
+   0.82 / 0.94 로 두면 gap 카드 레이아웃(8px 틈 + 14px 라운드)이 비쳐서
+   이미지 뒤에 "살짝 밝은 둥근 사각형" 이 보인다 — 이게 "여백이 이상하다" 의
+   정체였다. 카드 패널이 검은 틈보다 밝아서 6% 만 비쳐도 드러난다.
+
+   ✅ 해결: 알파를 올리는 게 아니라 **블러를 세게** 거는 것이었다.
+   blur(48px) 이면 카드 경계·틈·글자가 전부 뭉개져 형태가 사라지므로
+   알파 0.52 로도 "무늬" 가 보이지 않는다. 대신 뒤 화면의 색만 은은히
+   남아 iOS 사진 앱처럼 어두운 유리 무대가 된다. */
+[class*="lightbox"] {
+	background-color: rgba(0, 0, 0, 0.52) !important;
+	background-image: none !important;
+	-webkit-backdrop-filter: blur(48px) saturate(115%) brightness(0.75) !important;
+	backdrop-filter: blur(48px) saturate(115%) brightness(0.75) !important;
+}
+
+/* 안쪽 요소만 배경을 지운다 (이미지 뒤에 회색 판이 깔리지 않게) */
+[class*="lightbox"] > *,
+[role="dialog"][data-cup-lb] > * {
+	background-color: transparent !important;
+	background-image: none !important;
+}
+
+/* 검색 팝오버 등을 감싸는 모달 컨테이너에 유리 처리.
+   ⚠️ 라이트박스(이미지 확대)는 반드시 제외해야 한다. 제외하지 않으면
+   전체화면이어야 할 이미지 뷰어가 배경·테두리·그림자를 받아
+   둥근 "카드" 로 보인다 (실제로 이 버그를 냈다). */
+/* :not 을 두 번 쓴 건 오타가 아니다 — 원래 :not(:has(A)):not(:has(B)) 라
+   특이도가 (0,3,0) 이었고, 그걸 유지해야 아래 규칙들과의 우열이 안 뒤집힌다. */
+[class*="container__8a031"]:not([data-cup-lb]):not([data-cup-lb]) {
+	background-color: var(--panel-pop) !important;
+	background-image: var(--glass-tint) !important;
+	border: 1px solid var(--edge-side) !important;
+	border-top-color: var(--edge-top) !important;
+	border-bottom-color: var(--edge-bottom) !important;
+	box-shadow: var(--glass-depth), var(--glass-specular) !important;
+}
+
+/* 라이트박스를 감싼 컨테이너는 완전히 원상복구 */
+[class*="container__8a031"][data-cup-lb] {
+	background: transparent !important;
+	border: none !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+	overflow: visible !important;
+}
+
+/* ── 서버 레일 위쪽 여백 ──
+   실측: 첫 항목(홈 버튼)이 nav 위 테두리에 딱 붙어(gap 0) 14px 라운드에
+   잘려 보였다. 스크롤러에 위 여백을 준다 (아래는 디스코드가 24px 줌). */
+nav[class*="guilds_"] [class*="scroller"] {
+	padding-top: 10px !important;
+}
+
+/* ── 유저(멤버) 목록 넓히기 ──
+   ⚠️ 겉포장(membersWrap) 폭만 늘리면 안 된다. 디스코드가 안쪽 목록·행에
+   고정 폭을 박아둬서 겉만 넓어지고 내용은 그대로 남아 오른쪽에 빈 띠가 생긴다.
+   → 안쪽 컨테이너들을 100% 로 풀어 같이 늘어나게 한다. */
+[class*="membersWrap_"] {
+	width: 280px !important;
+	min-width: 280px !important;
+}
+
+[class*="membersWrap_"] > *,
+[class*="membersWrap_"] [class*="members_"],
+[class*="membersWrap_"] [class*="membersGroup_"],
+[class*="membersWrap_"] [class*="memberInner_"],
+[class*="membersWrap_"] [class*="member_"],
+[class*="membersWrap_"] [class*="content_"] {
+	width: 100% !important;
+	max-width: none !important;
+	/* box-sizing 이 없으면 패딩이 100% 위에 더해져 넘친다
+	   (실측: membersGroup 이 280px 지정인데 300px 로 렌더) */
+	box-sizing: border-box !important;
+}
+
+/* ⚠️ 자식에 margin 을 주는 방식은 쓰지 않는다.
+   content_ / sidebar_ 는 둘 다 grid 인데, stretch 되는 grid 항목에 margin 을
+   주면 디스코드가 넣은 height 와 이중 계산돼서 8px 씩 넘치고
+   (base_ scroll 1166 > client 1158) margin-right 는 아예 무시된다.
+   → 컨테이너의 padding + grid gap 으로 준다. 트랙 계산에 포함되므로 안전하다. */
+
+/* ⚠️ 성능: 원래 `[class*="content_"]:has(> [class*="sidebar_"])` 였다.
+   실측상 :has() 가 테마 렉의 94% 였다(채널 전환 4회 기준 1691ms).
+   content_ 후보가 78개나 되어 매 재계산마다 전부 검사됐다.
+   실측 구조: base__5e434 > content__5e434 (밑줄 두 개) 로 유일하게 지목된다. */
+[class*="base__"] > [class*="content__"] {
+	padding: var(--gap);
+	gap: var(--gap);
+	box-sizing: border-box;
+}
+
+[class*="sidebar_"]:not([class*="sidebarList"]) {
+	gap: var(--gap);
+}
+
+/* 각 패널을 카드로 */
+nav[class*="guilds_"],
+[class*="sidebarList_"],
+[class*="page_"],
+section[class*="panels_"] {
+	margin: 0 !important;
+	border-radius: var(--r-md) !important;
+	overflow: hidden;
+}
+
+/* 카드 테두리 — 바탕 패널은 배경색을 디스코드 것 그대로 두고
+   테두리·하이라이트만 얹는다 (그라디언트 틴트까지 깔면 넓은 면이 얼룩진다).
+
+   ⚠️⚠️ 큰 카드에는 **위/아래가 다른 비대칭 테두리를 쓰지 말 것.**
+   위쪽만 밝게(--edge-top .19 vs 옆 .09)는 작은 팝오버에서 "유리 두께"로
+   읽히지만, 1000px 넘는 전체 높이 카드에서는 두께가 아니라 **위에만 그어진
+   밝은 줄 하나**로 보인다 (실측: sidebarList_ 309x1106 / chatContent_
+   1741x1047 / 멤버카드 282x1049 셋 다 위 밝기 48 vs 옆 23).
+   → 큰 카드는 네 변을 같은 색으로. 위쪽 광택은 box-shadow inset 한 줄로만
+     아주 약하게 준다 (하드한 테두리 선이 아니라 sheen 이라 눈에 안 걸린다).
+   비대칭 테두리는 메뉴/팝오버/모달/입력창 같은 **작은 표면에만** 쓴다. */
+[class*="sidebarList_"],
+[class*="page_"],
+section[class*="panels_"] {
+	border: 1px solid var(--edge-side) !important;
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+nav[class*="guilds_"] {
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+/* 카드 안쪽 패널들은 자기 경계선을 갖지 않는다 (카드 테두리가 경계) */
+nav[class*="guilds_"],
+[class*="sidebar_"]:not([class*="sidebarList"]),
+[class*="membersWrap_"],
+[class*="activityPanel_"] {
+	border: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   1-1. 본문을 세 카드로 쪼갠다 — 헤더 / 채팅 / 멤버 목록
+
+   요청: "유저 목록도 서버 목록이나 채널 목록처럼 따로 나누자"
+
+   실측 구조 (여기 그대로 의존한다):
+     chat_f75fb0                flex column, bg rgba(19,21,26,.62), overflow hidden
+     ├ uploadArea_              position:fixed 드래그 오버레이 (건드리지 말 것)
+     ├ subtitleContainer_ 48px  채널 헤더 (자신은 투명, 안의 section.title_ 이 칠함)
+     └ content_                 flex row, 투명
+        ├ chatContent_          투명 (메시지 + 입력창)
+        └ container_c8ffbb      bg rgba(23,25,31,.62)  ← 멤버 목록이 칠하는 층
+           └ membersWrap_       투명
+              └ members_        bg rgba(23,25,31,.62)  ← ⚠️ 또 칠한다 (중첩)
+
+   ⚠️ 멤버 목록도 채팅과 똑같은 이중 칠 버그가 있었다 (0.62 × 2 = 실효 0.86).
+   container_ 하나만 칠하게 하고 members_ 는 비운다.
+
+   ⚠️ 헤더는 채팅 컬럼 위가 아니라 **멤버 목록 위까지 가로로 걸쳐 있다**
+   (멤버 목록 토글 버튼이 헤더 오른쪽 끝에 있으니 당연하다).
+   그래서 "헤더+채팅"을 한 카드로 묶는 건 CSS 로 불가능하다 — 형제라서
+   감쌀 방법이 없다. → 헤더를 **독립된 띠 카드**로 올리고, 그 아래에
+   채팅 카드와 멤버 카드를 나란히 둔다. 간격은 기존 --gap(8px) 그대로 써서
+   서버/채널 목록과 같은 리듬을 유지한다 (새 수치를 만들지 않는다).
+   ══════════════════════════════════════════════════════════ */
+
+/* chat_ 는 더 이상 칠하지 않는다 — 자식 카드들이 각자 칠한다 */
+[class*="chat_"] {
+	background-color: transparent !important;
+	gap: var(--gap);
+}
+
+[class*="chat_"] > [class*="content_"] {
+	gap: var(--gap);
+}
+
+/* 카드 껍데기 = 헤더 + content_ 의 직계 자식 전부.
+   ⚠️ 멤버 목록만 이름으로 지목하지 않는다. content_ 의 직계 자식에는
+   상황에 따라 **검색 결과 패널(container__2637a, 308px 전체높이)** 도 들어오는데
+   (멤버 목록 자리를 차지한다), 이름으로 지목하면 그런 것들이 카드가 안 돼서
+   혼자 각진 판으로 남는다 (실측으로 확인). 구조로 잡는 게 맞다. */
+[class*="chat_"] > [class*="subtitleContainer_"],
+[class*="chat_"] > [class*="content_"] > * {
+	border-radius: var(--r-md) !important;
+	overflow: hidden;
+	/* 큰 카드는 네 변 같은 색 — 위쪽만 밝게 하면 밝은 줄로 보인다 (위 설명 참고) */
+	border: 1px solid var(--edge-side) !important;
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 2px 10px rgba(0, 0, 0, 0.3);
+	-webkit-backdrop-filter: var(--panel-blur);
+	backdrop-filter: var(--panel-blur);
+}
+
+/* ⚠️ 오진 방지 메모: 감사에서 `container__2637a` 308x1065 이 "알파 0.62 인데
+   블러 없음" 으로 잡히지만 **버그가 아니다.** 그건 검색 결과 패널이 아니라
+   **채널 목록의 내부 컨테이너**(x=88)이고, 부모 `sidebarList_` 가 거의 같은
+   영역(309x1067)에 블러를 이미 걸고 있다. 칠하는 층 하나 + 같은 영역 블러
+   = 정상. 블러는 "칠하는 그 요소" 가 아니라 "그 영역" 에 걸리면 된다.
+   여기에 규칙을 더 추가하지 말 것. */
+
+/* ⚠️⚠️ "입력할 때마다 오른쪽 멤버 목록이 줄어든다" 의 원인 ─────────────
+   실측(창 1280px, 한 글자씩 타이핑): 멤버 카드 282 → **249px** 로 글자당 4px씩
+   줄고 chatContent 가 577 → 610px 로 같은 양 늘어났다. 지우면 되돌아온다.
+   (넓은 창 2444px 에서는 flex 여유가 있어 전혀 재현되지 않는다 —
+    ResizeObserver 로 변동 0건. 좁혀야 보인다.)
+
+   왜:
+     · 멤버 카드가 `flex: 0 1 auto` + `min-width: auto` → **줄어들 수 있다**
+     · chatContent 가 `flex-basis: auto` → 입력 내용이 길어지면 폭을 더 요구한다
+     · 게다가 안쪽 membersWrap 은 내가 280px 로 못 박아뒀으니, 카드가 줄면
+       내용이 카드를 넘쳐 `overflow: hidden` 에 잘린다 = "줄어든 것처럼" 보인다
+
+   → 멤버 카드는 절대 줄어들지 않게(shrink 0), 메시지 컬럼은 내용 폭에
+     끌려가지 않게(basis 0) 고정한다. 폭 값 자체는 건드리지 않는다. */
+/* ⚠️⚠️ 성능: 원래 `> *:has([class*="membersWrap_"])` 였다 — 전체 선택자 + 자손 :has
+   조합이라, 채팅 하위에서 메시지가 하나 렌더될 때마다 무효화가 걸렸다.
+   :has() 중 가장 비싼 형태였다.
+   실측 구조: membersWrap_c8ffbb ⊂ container_c8ffbb ⊂ content_f75fb0 ⊂ chat_f75fb0
+   → 해시 없이 container_ 로 직접 지목한다. */
+[class*="chat_"] > [class*="content_"] > [class*="container_"] {
+	flex: 0 0 auto !important;
+}
+
+[class*="chatContent_"] {
+	flex: 1 1 0% !important;
+	min-width: 0 !important;
+}
+
+/* 메시지 컬럼은 가장 어두운 톤, 오른쪽 패널(멤버·검색결과)은 한 단 밝은 톤 */
+[class*="chatContent_"] {
+	background-color: var(--background-base-lowest) !important;
+}
+
+[class*="chat_"] > [class*="content_"] > *:not([class*="chatContent_"]) {
+	background-color: var(--background-base-lower) !important;
+}
+
+/* 헤더 띠 카드 — 안쪽 section.title_ 이 칠하므로 여기는 투명하게 두고
+   곡률만 준다. 안 그러면 또 이중 칠이 된다.
+
+   ⚠️⚠️ `flex: 0 0 auto` 가 반드시 필요하다. chat_ 는 flex column 이고
+   content_ 는 `flex: 1 1 auto` + flex-basis:auto 인데 그 안의 스크롤러
+   콘텐츠가 엄청나게 길다. gap 을 넣는 순간 희망 크기 합이 컨테이너를
+   넘어서면서 shrink 가 발동해 **헤더가 48px → 3px 로 찌그러졌다** (실측).
+   헤더는 절대 줄어들면 안 되므로 shrink 를 0 으로 고정한다. */
+[class*="chat_"] > [class*="subtitleContainer_"] {
+	background-color: transparent !important;
+	flex: 0 0 auto !important;
+}
+
+/* 본문은 남는 높이를 받고, 내부 스크롤을 위해 min-height 를 풀어준다 */
+[class*="chat_"] > [class*="content_"] {
+	min-height: 0;
+}
+
+/* 카드 안쪽은 칠하지 않는다 (이중 칠 제거).
+   멤버 목록은 container_ 와 members_ 가 **둘 다** 0.62 를 칠해 실효 0.86 이었다
+   — 채팅 컬럼과 똑같은 버그. 칠하는 층은 카드 껍데기 하나만.
+
+   ⚠️ 자식(`>`)이 아니라 **자손** 선택자여야 한다. 실제 깊이는
+   `content_ > container_ > membersWrap_ > members_` 로 두 단 아래다.
+   (그리고 `[class*="members_"]` 는 `membersWrap_` 을 잡지 않는다 —
+   "membersWrap_" 안에는 "members_" 라는 문자열이 없다.) */
+[class*="chat_"] > [class*="content_"] > * [class*="members_"] {
+	background-color: transparent !important;
+}
+
+/* page_ 는 이제 스스로 칠하지도, 블러하지도 않는다 — 자식 카드가 한다.
+   여기에 블러가 남아 있으면 카드마다 블러가 두 겹이 된다. */
+[class*="page_"] {
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+	border: none !important;
+	box-shadow: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   1. 경계선 — 굵은 보더/무거운 그림자를 헤어라인으로
+   ══════════════════════════════════════════════════════════ */
+
+nav[class*="guilds_"],
+[class*="sidebar_"]:not([class*="sidebarList"]) {
+	border-right: 1px solid var(--hair);
+}
+
+[class*="membersWrap_"],
+[class*="activityPanel_"] {
+	border-left: 1px solid var(--hair);
+}
+
+section[class*="panels_"] {
+	border-top: 1px solid var(--hair);
+}
+
+/* 항상 보이는 "띠" 표면에는 은은한 글래스를 준다.
+   디스코드 기본 레이아웃은 패널이 서로 겹치지 않아서(나란히 배치) 바탕에
+   깔 것이 없으면 블러가 유리로 안 읽힌다. 그래서 부모 배경 위에 얇은
+   반투명 + 블러 + 상단 sheen 만 얹어 프로스티드 질감을 낸다. */
+/* 채널 헤더 — 이제 독립된 띠 카드 안에 들어간다 (1-1 참고).
+   ⚠️ chat_ 가 더 이상 칠하지 않으므로 예전의 흰색 0.028 로는 아무것도 안 보인다.
+   카드와 같은 톤으로 올리고, 블러는 겉껍데기(subtitleContainer_)가 하니 여기선 뺀다.
+   카드가 됐으니 아래 구분선도 필요 없다 (카드 사이 간격이 경계). */
+section[class*="title_"] {
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09) !important;
+	border-bottom: none !important;
+	/* ⚠️ background 단축 속성은 background-image 를 none 으로 리셋한다.
+	   틴트를 같이 쓰려면 반드시 longhand 로 나눠 써야 한다. */
+	background-color: var(--background-base-lowest) !important;
+	background-image: var(--glass-tint-bar) !important;
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+}
+
+/* ⚠️ 성능: 원래 `[class*="bar_"]:has(> [class*="leading_"])` 였다.
+   실측 구조: base__5e434 > bar_c38106 이 유일한 대상이다. */
+[class*="base__"] > [class*="bar_"] {
+	border-bottom: 1px solid var(--hair);
+	background-color: rgba(255, 255, 255, 0.022) !important;
+	background-image: var(--glass-tint-bar) !important;
+	-webkit-backdrop-filter: var(--panel-blur);
+	backdrop-filter: var(--panel-blur);
+}
+
+/* ── 유저 패널의 프로필 이펙트 정리 ──────────────────────────
+   실측: fitInAccount_df39b2 에 파란 그라디언트
+   linear-gradient(90deg, rgba(1,49,194,.1) → rgba(1,49,194,.4)) 가 깔리고
+   그 안 <video class="img_ account_"> 가 opacity 0.4 로 재생된다.
+   58px 짜리 좁은 패널에서 파란 틴트 + 움직이는 영상이 아이콘·글자와 겹쳐
+   어수선해 보였다.
+   → 파란 틴트는 없애고 영상은 배경 질감 수준으로 낮춘다.
+   ─────────────────────────────────────────────────────────── */
+
+[class*="fitInAccount"] {
+	background-image: none !important;
+}
+
+[class*="fitInAccount"] video,
+[class*="fitInAccount"] [class*="img_"] {
+	opacity: 0.12 !important;
+	filter: saturate(0.5) contrast(0.9);
+}
+
+/* 프로필 장식을 아예 끄고 싶으면 아래 두 줄의 주석을 해제
+[class*="fitInAccount"] { display: none !important; }
+*/
+
+/* 하단 유저 패널 */
+section[class*="panels_"] {
+	background-color: rgba(255, 255, 255, 0.03) !important;
+	background-image: var(--glass-tint-bar) !important;
+	-webkit-backdrop-filter: var(--panel-blur);
+	backdrop-filter: var(--panel-blur);
+	box-shadow: var(--glass-edge) !important;
+}
+
+/* ⚠️⚠️ `[class*="divider_"]` 는 **날짜 구분선과 "신규"(새 메시지) 구분선이
+   같은 클래스**를 쓴다 (실측: 날짜 = `divider__5126c hasContent__5126c`,
+   새 메시지 = `divider__5126c beforeGroup__5126c … isUnread__908e2`).
+   여기에 헤어라인 색을 통째로 걸어서 **빨간 새 메시지 선이 흰색 0.07 로
+   덮여 안 보였다** (바닐라는 `rgb(218,62,68)`). → isUnread 는 제외한다. */
+[class*="divider_"]:not([class*="isUnread"]) {
+	border-color: var(--hair) !important;
+}
+
+/* "신규" 라벨은 divider 의 ::after 로 그려지고, 디스코드는 그 글자색으로
+   `--background-base-lowest` 를 쓴다 (빨간 알약에서 글자가 파낸 것처럼
+   보이게 하는 트릭). 내가 그 토큰을 반투명(.62)으로 바꿔서 라벨이 흐려졌다
+   → 이 요소에서만 불투명 값으로 되돌린다. 선 색은 디스코드 것 그대로. */
+[class*="divider_"][class*="isUnread"] {
+	color: rgb(19, 21, 26) !important;
+}
+
+/* (구) 디스코드가 좌상단만 둥글리던 부분 — 이제 위 gap 시스템에서 카드로
+   만들면서 네 모서리를 다 둥글게 하므로 여기서 한쪽만 둥글리면 안 된다.
+   이 규칙이 뒤에 와서 카드 곡률을 덮어써 "좌상단만 둥근" 상태를 만들었다. */
+
+/* ══════════════════════════════════════════════════════════
+   2. 둥글기 — 목록 / 메시지
+      여백은 건드리지 않는다. border-radius 만.
+   ══════════════════════════════════════════════════════════ */
+
+[class*="link_"],
+[class*="channelRow_"],
+[class*="interactive_"],
+[class*="memberInner_"],
+[class*="message_"] {
+	border-radius: var(--r-sm) !important;
+}
+
+/* ── 스케일 밖 곡률 정리 (실측으로 찾은 것들) ──────────────────
+   디스코드가 자기 값으로 그리는 곳들이 내 스케일(6/10/14/18/24)에서
+   3~8px 로 어긋나 있었다. 곡률이 일관돼야 한 세트로 보인다.
+     · guildDropdown_   144x32  8px → sm
+     · 유저패널 계정 행  372x56  7px → sm  (감싼 패널이 md 14px 이므로 안쪽은 sm)
+     · 칩(chiplet)       57x16   4px → xs
+     · 멘션 알약        222x24  3px → xs
+   ⚠️ 크기는 건드리지 않는다. 곡률만. */
+[class*="guildDropdown_"] {
+	border-radius: var(--r-sm) !important;
+}
+
+section[class*="panels_"] [class*="container__"],
+section[class*="panels_"] [class*="fitInAccount_"] {
+	border-radius: var(--r-sm) !important;
+}
+
+[class*="chipletContainer"],
+[class*="chipletContainerInner"] {
+	border-radius: var(--r-xs) !important;
+}
+
+.mention,
+[class*="mention"][class*="wrapper_"] {
+	border-radius: var(--r-xs) !important;
+}
+
+/* 메시지에 호버하면 뜨는 액션 툴바 (반응/답장/더보기) — 211x34, 8px 였다 */
+[class*="buttonsInner"] {
+	border-radius: var(--r-sm) !important;
+}
+
+/* 선택된 채널/DM — 무채색 유리 채움 (파란 틴트 대신) */
+[class*="modeSelected_"] [class*="link_"],
+[class*="link_"][class*="modeSelected_"],
+[class*="sidebar_"] [class*="interactiveSelected_"] {
+	background: var(--fill-selected) !important;
+}
+
+[class*="modeSelected_"] [class*="link_"]:hover,
+[class*="sidebar_"] [class*="interactiveSelected_"]:hover {
+	background: var(--fill-focused) !important;
+}
+
+/* ── 서버 레일 ──
+   항목 크기·간격은 디스코드 기본(40x40, 8px)이 적정 → 손대지 않는다.
+   아이콘 모양도 SVG mask 로 잘리므로 CSS로 못 바꾼다. */
+
+[class*="listItem_"] [class*="pill_"] > span {
+	border-radius: 999px !important;
+	width: 4px !important;
+	margin-left: 3px;
+}
+
+[class*="guildSeparator_"] {
+	background: var(--hair) !important;
+	border-radius: 999px !important;
+}
+
+[class*="folderGroupBackground_"] {
+	background: rgba(255, 255, 255, 0.045) !important;
+	border-radius: var(--r-md) !important;
+}
+
+[class*="folderIconWrapper_"] {
+	border-radius: var(--r-md) !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   3. 메시지 입력창 — 한 겹만 둥글게
+
+   디스코드는 채움색과 1px 보더를 겉껍데기(channelTextArea)에 그린다.
+   안쪽 scrollableContainer 는 원래 투명하다. 여기에 보더를 또 주면
+   이중 외곽선이 되어 둥글기가 어긋나 보인다.
+   → 겉껍데기 한 겹만 칠한다.
+
+   ⚠️ 실측: 여기가 화면에서 **유일하게 알파 1** 이었다
+   (oklab(0.191 …) — 내가 덮은 --background-base-* 가 아닌 별도 토큰).
+   패널이 전부 유리가 된 뒤에는 이 한 곳만 단색으로 도드라져 보인다.
+   → 헤더와 같은 방식(흰색 살짝 올리기 + 블러)으로 통일한다.
+   흰색을 올리는 방식이라 뒤 컬럼이 어두울 때도 글자 대비가 유지된다.
+   ══════════════════════════════════════════════════════════ */
+
+[class*="channelTextArea_"] {
+	border-radius: var(--r-xl) !important;
+	background-color: rgba(255, 255, 255, 0.042) !important;
+	background-image: var(--glass-tint-bar) !important;
+	/* 입력창은 채팅 위에 뜬다 → 뒤 글자가 비치면 안 되니 넉넉히 블러.
+	   brightness 는 낮게: 여긴 흰색을 올려 이미 밝으므로 더 들면 뿌옇다. */
+	-webkit-backdrop-filter: blur(24px) saturate(160%) brightness(1.14);
+	backdrop-filter: blur(24px) saturate(160%) brightness(1.14);
+	border: 1px solid var(--edge-side) !important;
+	border-top-color: var(--edge-top) !important;
+	border-bottom-color: var(--edge-bottom) !important;
+	/* 림은 box-shadow 로만 — ::after 링은 글자를 덮어 번지게 한다(위 실패 기록) */
+	box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.22),
+		inset 0 -1px 0 rgba(255, 255, 255, 0.05), inset 0 0 18px rgba(255, 255, 255, 0.04);
+	/* ⚠️⚠️ overflow: hidden 을 주면 안 된다 — "@ 치면 아무것도 안 뜬다" 의 원인.
+	   `@` 자동완성(autocomplete__13533)은 이 요소의 **자식**이면서
+	   `position: absolute` 로 입력창 **위쪽**(실측: 입력창 y=1083, 자동완성 y=617)
+	   에 떠오른다. 즉 부모 박스 밖이라 overflow:hidden 이면 통째로 잘려 사라진다.
+	   (바닐라는 여기가 overflow: visible 이다.)
+	   곡률 클리핑 때문에 넣었던 것인데 필요 없다 — background/backdrop-filter 는
+	   border-radius 를 자동으로 따르고, 안쪽 자식들은 투명·곡률 0 이다. */
+}
+
+[class*="channelTextArea_"] [class*="scrollableContainer_"],
+[class*="channelTextArea_"] [class*="inner_"],
+[class*="channelTextArea_"] [class*="attachedBars_"],
+[class*="channelTextArea_"] [class*="buttons_"] {
+	background: transparent !important;
+	border: none !important;
+	border-radius: 0 !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   4. 인풋 · 버튼
+   ══════════════════════════════════════════════════════════ */
+
+input[class*="inputDefault_"],
+textarea[class*="inputDefault_"],
+[class*="searchBar_"],
+[class*="input_"][class*="default"] {
+	border-radius: var(--r-md) !important;
+	border: 1px solid var(--hair-hi) !important;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+[class*="inputDefault_"]:focus,
+[class*="searchBar_"]:focus-within {
+	outline: none !important;
+	border-color: var(--t-blue) !important;
+	box-shadow: 0 0 0 3px var(--t-blue-ring) !important;
+}
+
+/* ⚠️⚠️ `[class*="scrollableContainer_"]:focus-within` 에 포커스 링을 주면 안 된다.
+   그건 메시지 입력창(channelTextArea_, 곡률 24px) **안쪽의 사각 컨테이너**다
+   (내가 위에서 border-radius: 0 으로 만들어 둔 것). 거기에 3px 링이 붙으면
+   둥근 알약 안에 **네모난 파란 테두리**가 겹쳐 보인다 ("이상한 테두리 생김").
+   실측: scrollableContainer 1653x56 에 rgba(49,130,246,.28) 0 0 0 3px,
+        바닐라에는 파란 요소가 아예 없다.
+   → 안쪽 컨테이너의 링만 없앤다. */
+[class*="channelTextArea_"] [class*="scrollableContainer_"]:focus-within {
+	box-shadow: none !important;
+}
+
+/* ⚠️ 포커스했을 때 알약의 상단 sheen 이 사라지는 문제도 있었다
+   (실측: 포커스 전 shadow 있음 → 포커스 후 none).
+   포커스 상태에서도 같은 그림자를 명시해 모양이 변하지 않게 고정한다. */
+[class*="channelTextArea_"]:focus-within {
+	box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.22),
+		inset 0 -1px 0 rgba(255, 255, 255, 0.05), inset 0 0 18px rgba(255, 255, 255, 0.04) !important;
+	border-top-color: var(--edge-top) !important;
+}
+
+button[class*="button_"]:not([class*="lookBlank"]):not([class*="winButton"]) {
+	border-radius: var(--r-md) !important;
+	transition: transform 0.09s ease, filter 0.15s ease, background-color 0.15s ease;
+}
+
+button[class*="button_"]:not([class*="lookBlank"]):not([class*="winButton"]):active {
+	transform: scale(0.975);
+	filter: brightness(0.94);
+}
+
+[class*="checked_"] [class*="slider_"],
+input:checked + [class*="slider_"] {
+	background: var(--t-blue) !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   5. 글래스모피즘 — 떠 있는 레이어에만
+      (사이드바·본문·서버레일은 디스코드 원래 색 그대로, 블러 없음)
+   ══════════════════════════════════════════════════════════ */
+
+/* ── 떠 있는 표면 공통: iOS 26 식 유리 ──────────────────────
+   background-color 위에 background-image(그라디언트 틴트)를 겹치고,
+   정반사 하이라이트 + 위/아래가 다른 테두리 + 깊이 그림자를 준다.
+   블러가 되는 레이어에서는 backdrop-filter 가 추가로 얹힌다. */
+[role="menu"],
+[class*="menu_"]:not([class*="menuItem"]),
+[class*="submenu_"],
+[class*="layerContainer_"] [class*="popout_"],
+[class*="autocomplete_"],
+[class*="quickswitcher_"],
+[class*="tooltip_"] {
+	background-color: var(--panel-pop) !important;
+	background-image: var(--glass-tint) !important;
+	-webkit-backdrop-filter: var(--glass-blur);
+	backdrop-filter: var(--glass-blur);
+	border: 1px solid var(--edge-side) !important;
+	border-top-color: var(--edge-top) !important;
+	border-bottom-color: var(--edge-bottom) !important;
+	box-shadow: var(--glass-depth), var(--glass-specular) !important;
+	/* ⚠️⚠️ 여기에 `position: relative` 를 넣지 말 것 (죽은 코드로 남겨뒀다가 사고냈다).
+	   폐기한 ::after 림 밴드를 위해 넣었던 줄인데, 그게 `@` 자동완성의
+	   `position: absolute` 를 덮어써서 자동완성이 입력창 **안쪽 흐름**으로
+	   들어갔다. 그 결과 입력창이 58px → **517px** 로 부풀고, 내 overflow:hidden
+	   + 24px 곡률이 그걸 거대한 빈 둥근 상자로 잘라냈다 (실측 A/B 로 확인:
+	   바닐라는 absolute 1756x457, 내 테마는 relative + 입력창 517px).
+	   떠 있는 표면의 position 은 디스코드가 정하게 두고 절대 건드리지 말 것. */
+}
+
+/* ── ⚠️⚠️ 실패 기록: 테두리 굴절 밴드를 ::after 로 만들면 안 된다 ──────
+   iOS 26 의 차별점은 "테두리에서만 빛이 꺾인다" 는 굴절인데,
+   그걸 흉내내려고 마스크로 링을 만들고 backdrop-filter 를 얹어 봤다.
+
+   결과: 유리가 아니라 이상해 보였다. 이유는 페인트 순서다.
+     · ::after 는 position:absolute → 배치된 요소로 8번째 페인트 레이어
+     · 자식들의 글자(static inline)는 4번째 레이어
+   즉 링이 **글자 위에** 놓인다. 거기에 backdrop-filter 가 걸리면
+   뒤 배경이 아니라 **입력창/메뉴의 글자를 다시 블러**해서 테두리 쪽
+   텍스트가 번졌다. 58px 짜리 입력창에서는 9px 링이 위아래를 거의 다
+   덮어 버려서 특히 심했다.
+
+   → 림은 box-shadow inset 으로만 표현한다. box-shadow 는 요소 자신의
+   배경 레이어에 그려지므로 **자식 글자보다 아래**다. 가독성 손상이 없다.
+   그 구현은 위 --glass-specular (상단 정반사 + 하단 투과광 + inset 글로우).
+   이 블록을 backdrop-filter 링으로 되돌리지 말 것. */
+
+/* ── 표면마다 블러를 따로 잡는다 ────────────────────────────
+   한 값을 전부에 쓰면 어딘가는 과하고 어딘가는 모자란다.
+   기준: 뒤에 비칠 내용이 복잡할수록 세게, 면적이 클수록 약하게. */
+
+/* 메뉴·서브메뉴 — 채널 목록 위에 뜬다. 글자가 비치면 지저분하니 세게. */
+[role="menu"],
+[class*="menu_"]:not([class*="menuItem"]),
+[class*="submenu_"] {
+	-webkit-backdrop-filter: blur(32px) saturate(190%) brightness(1.44);
+	backdrop-filter: blur(32px) saturate(190%) brightness(1.44);
+}
+
+/* ⚠️⚠️ 서브메뉴가 "겹쳐 보이던" 이유 ──────────────────────────
+   실측: 부모 `menu_`(184x490, 알파 .6) **안에** `submenu_`(188x222, 알파 .6)가
+   DOM 자식으로 들어 있고, 디스코드가 부모 오른쪽 경계에 살짝 물리게 배치한다.
+   두 유리가 겹치는 띠에서 알파가 .6+.6 → 실효 .84 로 쌓여 경계가 지저분해지고,
+   서브메뉴가 부모와 뭉쳐 한 판처럼 보였다.
+
+   → 서브메뉴를 **한 단 더 불투명하게 + 그림자를 세게** 줘서 "위에 떠 있는
+     별개 판" 으로 읽히게 한다. 겹침 자체는 디스코드가 인라인으로 배치하므로
+     없앨 수 없다 → 대신 위계를 분명히 해서 겹쳐 보이지 않게 만든다.
+   ⚠️ 위치/여백은 건드리지 않는다 (인라인 배치를 CSS 로 이기려 하면 어긋난다).
+
+   ⚠️⚠️ 특이도: 서브메뉴 클래스는 `submenu_c1e9c4 **menu_c1e9c4**` 로 `menu_` 를
+   같이 갖는다. 아래쪽 유리 규칙 `[class*="menu_"]:not([class*="menuItem"])` 는
+   :not 의 인자까지 세서 (0,2,0) 이고 소스 순서도 뒤라, `[class*="submenu_"]`
+   (0,1,0) 로는 `!important` 를 붙여도 진다 (실제로 한 번 실패했다).
+   → 같은 속성 선택자를 세 번 반복해 (0,3,0) 으로 올린다. */
+[class*="submenu_"][class*="submenu_"][class*="submenu_"] {
+	background-color: var(--panel-modal) !important;
+	box-shadow: 0 18px 46px rgba(0, 0, 0, 0.58), 0 4px 12px rgba(0, 0, 0, 0.4),
+		var(--glass-specular) !important;
+	border: 1px solid var(--edge-side) !important;
+	border-top-color: var(--edge-top) !important;
+}
+
+/* 툴팁 — 아주 작다. 세게 걸면 단색 알약처럼 보여 유리가 안 읽힌다. */
+[class*="tooltip_"] {
+	-webkit-backdrop-filter: blur(14px) saturate(170%) brightness(1.5);
+	backdrop-filter: blur(14px) saturate(170%) brightness(1.5);
+}
+
+/* 자동완성 — 화면 중앙의 큰 판. 부드럽게 넓게 퍼뜨린다. */
+[class*="autocomplete_"] {
+	-webkit-backdrop-filter: blur(40px) saturate(175%) brightness(1.34);
+	backdrop-filter: blur(40px) saturate(175%) brightness(1.34);
+}
+
+/* ── ⚠️⚠️ "블러가 제대로 안 들어간 게 많다" 의 원인 ────────────────
+   내 글래스 규칙은 **손으로 고른 선택자 목록**이었다. 그런데
+   `--background-base-*` / `--background-surface-*` 반투명 토큰은 **전역**이라,
+   목록에 없는 떠 있는 팝오버는 반투명만 받고 블러가 없어서
+   "알파만 있는 유리" = 뒤 글자가 선명히 비치는 상태가 됐다.
+
+   실측으로 잡은 것들 (기준선 대비 새로 나타난 칠하는 층만 추출):
+     · 검색 필터 드롭다운  container__16eb0  356x494  알파 0.66  블러 없음
+     · 빠른 이동 겉껍데기  container__8a031  680x401  알파 0.60  블러 없음
+   둘 다 `container__` 계열이고 레이어 안에 있다 → 일괄로 블러를 준다.
+   이미 블러된 부모 안의 중첩 요소에 또 걸려도, 이미 흐린 결과를 다시
+   흐리는 것이라 외관은 그대로다 (비용만 조금 든다).
+
+   ⚠️⚠️ 여기에 `[class*="layer_"] [class*="container__"]` 를 넣으면 안 된다.
+   앱 셸 자체가 `layer__960e4 baseLayer__960e4` 라서 그 셀렉터가
+   `container__5e434` (**2268x1119 = 화면 전체**) 를 잡아 화면 전체에
+   blur(28px) + brightness(1.42) 를 걸어버렸다 (실측으로 확인).
+   반드시 **`layerContainer_`(떠 있는 레이어의 루트)로만** 한정할 것. */
+/* ⚠️ 프로필 테마 표면 제외 — --glass-blur 에는 brightness(1.42) 가 들어 있어서
+   밝은 프로필 색 위에 걸면 하얗게 날아간다. */
+/* ⚠️⚠️ 제외 조건은 `user-profile` 이 아니라 `.theme-light` 다 (실측으로 고쳤다).
+   평범한 프로필 팝오버도 클래스에 **user-profile-popout** 을 갖는다
+   (`outer_c0bea0 theme-dark theme-midnight images-dark user-profile-popout`).
+   그래서 `:not([class*="user-profile"])` 로 걸러버리면 프로필 테마와 무관한
+   일반 팝오버까지 전부 제외돼 **알파 0.66 인데 블러가 없는** 상태가 된다
+   ("블러 안 먹는 게 많다" 의 정체).
+   밝은 프로필 테마 표면만 `theme-light` 를 갖는다 → 그것만 제외한다. */
+[class*="layerContainer_"] [class*="container__"]:not(.theme-light),
+[class*="layerContainer_"] [class*="outer_"]:not(.theme-light) {
+	-webkit-backdrop-filter: var(--glass-blur);
+	backdrop-filter: var(--glass-blur);
+}
+
+/* 빠른 이동은 겉껍데기(container__8a031)와 안쪽(quickswitcher_)이 **둘 다**
+   0.6 을 칠하고 있었다 → 실효 0.84 + 이중 보더. 겉껍데기를 유리로 삼고
+   안쪽은 비운다 (컬럼 중첩 문제와 같은 원리: 칠하는 층은 하나만). */
+[class*="quickswitcher_"] {
+	background-color: transparent !important;
+	background-image: none !important;
+	border: none !important;
+	box-shadow: none !important;
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+}
+
+/* 모달 스크림 — 디스코드는 그냥 어둡게만 덮는다(oklab 0.72).
+   살짝 블러를 얹으면 iOS 식으로 뒤가 가라앉아 모달이 앞으로 나온다. */
+[class*="scrim"]:not([class*="lightbox"]) {
+	-webkit-backdrop-filter: blur(7px) saturate(105%) brightness(0.92);
+	backdrop-filter: blur(7px) saturate(105%) brightness(0.92);
+}
+
+[role="menu"],
+[class*="menu_"]:not([class*="menuItem"]),
+[class*="submenu_"] {
+	border-radius: var(--r-lg) !important;
+}
+
+/* ── 이모지 / GIF / 스티커 피커 ────────────────────────────────────
+   실측 사슬: layerContainer__59d0d → clickTrapContainer → positionLayer__08434
+             (expressionPickerPositionLayer__74017) → positionContainer
+             → drawerSizingWrapper → contentWrapper__08434
+   조상에 transform·filter 가 하나도 없다(실측) = 블러가 되는 자리인데
+   규칙을 안 줘서 불투명 rgb(33,35,42) 로 남아 있었다. 프로필 팝오버 때와 같은 실수.
+   세 피커가 같은 contentWrapper 를 쓰므로 규칙 하나로 셋 다 덮인다.
+   ⚠️ contentWrapper_ 만으로 잡으면 범위가 너무 넓다 — 반드시 피커 레이어로 한정할 것. */
+/* GIF 피커만 안쪽 판(container_fed6d3)이 불투명 rgb(27,29,35) 을 칠해서
+   껍데기 유리를 그대로 덮어버린다 (이모지·스티커는 이미 투명이다).
+   칠하는 층은 껍데기 하나면 된다 — 겹쳐 칠하면 알파가 곱해져 유리가 사라진다. */
+[class*="expressionPickerPositionLayer"] [class*="contentWrapper_"] > [class*="container_"] {
+	background-color: transparent !important;
+}
+
+[class*="expressionPickerPositionLayer"] [class*="contentWrapper_"] {
+	background-color: var(--panel-pop) !important;
+	background-image: var(--glass-tint) !important;
+	-webkit-backdrop-filter: var(--glass-blur);
+	backdrop-filter: var(--glass-blur);
+	border: 1px solid var(--edge-side) !important;
+	border-top-color: var(--edge-top) !important;
+	border-bottom-color: var(--edge-bottom) !important;
+	border-radius: var(--r-lg) !important;
+	box-shadow: var(--glass-depth), var(--glass-specular) !important;
+}
+
+/* 메뉴 항목은 곡률만. 여백은 디스코드 기본 */
+[role="menu"] [class*="item_"],
+[class*="menu_"] [class*="item_"] {
+	border-radius: var(--r-sm) !important;
+}
+
+/* 선택 항목 — 진한 파란 덩어리(알파 1.0) 대신 무채색 유리 채움.
+   글자색도 강제하지 않아서 위험 항목(차단하기 등)의 빨간 글씨가 살아남는다. */
+[role="menu"] [class*="item_"][class*="focused"],
+[class*="menu_"] [class*="item_"][class*="focused"] {
+	background: var(--fill-focused) !important;
+}
+
+[class*="menu_"] [class*="separator_"] {
+	background: var(--hair-hi) !important;
+	border: none !important;
+}
+
+[class*="layerContainer_"] [class*="popout_"],
+[class*="autocomplete_"],
+[class*="quickswitcher_"] {
+	border-radius: var(--r-lg) !important;
+}
+
+/* ── 프로필 팝업 ──────────────────────────────────────────────
+   실측: 루트가 outer_c0bea0 (304x395, 곡률 10px). 클래스가 popout_ 이 아니라
+   내 팝오버 규칙이 안 닿아 혼자 10px 로 남아 있었다.
+   outer_ 는 흔한 이름이라 "배너를 가진 것" 으로 한정해 안전하게 지목한다.
+   블러는 이 레이어에서 작동한다 (transform 조상 없음 — 플러그인이 이미 풀어줌). */
+/* ── 전체 프로필 모달: 아래가 테두리에 딱 붙어 잘리는 것 ──────────
+   테마를 켠 채/끈 채 같은 모달을 A/B 로 재보니 **바닐라도 바닥차 0px** 이었다
+   = 디스코드 원래 동작이고 내가 깨뜨린 게 아니다. 컬럼 스크롤러
+   (`profileBody_` padB 32px / `tabPanelScroller_` padB 16px)가 모달 바닥
+   2px 앞까지 꽉 차 있어서, 스크롤 중간 상태의 내용이 모달 경계에서 잘린다.
+
+   ⚠️ 하지만 내가 모달 곡률을 8px → 18~24px 로 키웠기 때문에 그 잘린 내용이
+   둥근 모서리에 물려 훨씬 도드라진다. 곡률을 키운 대가는 내가 치러야 한다.
+   → 컬럼을 감싼 층에 아래 여백을 줘서 스크롤 뷰포트가 모서리보다 위에서
+     끝나게 한다. 그러면 아래에 모달 유리가 한 줄 보여 숨통이 트인다.
+
+   ⚠️ 스코프는 `focusLock` 으로 잡는다 — 모달에만 있고 프로필 **팝오버**에는
+   없다 (팝오버는 layerContainer_ > clickTrapContainer_ 아래에 있다).
+   그래서 306x399 짜리 작은 팝오버에는 이 여백이 붙지 않는다. */
+[class*="focusLock"] [class*="layoutContainer_"],
+[class*="focusLock"] [class*="outer_"] > [class*="inner_"] {
+	/* 16px = --gap 두 배이자 디스코드 자체 스크롤러 패딩(16px)과 같은 리듬.
+	   8px 로는 24px 곡률의 모서리 곡선을 벗어나지 못해 여전히 물린다. */
+	padding-bottom: calc(var(--gap) * 2) !important;
+	box-sizing: border-box;
+}
+
+/* ⚠️⚠️ 프로필 팝업에 블러가 없던 이유 (실측으로 규명) ─────────────
+   조상 사슬을 전부 훑어보니 **transform/filter 가 하나도 없다**
+   (`블러막는것: []`) — 즉 블러가 가능한 자리였는데 내가 안 준 것이었다.
+   그런데 배경은 `rgba(31,33,40,0.66)` 반투명 → "알파만 있는 유리" 라
+   뒤 글자가 그대로 비쳤다.
+
+   왜 반투명이었나: 위쪽에 `[class*="layerContainer_"]` 로 배경 토큰을 다시
+   불투명하게 되돌리는 규칙이 있는데, **`.theme-dark` 가 그 안쪽
+   `layer__59d0d` 요소에 직접 붙어 있다.** 더 가까운 정의가 이기므로
+   반투명 토큰이 되살아난다. 커스텀 프로퍼티는 "가장 가까운 조상의 정의"
+   가 이긴다는 걸 잊지 말 것 — 바깥에 걸어둔 override 는 안쪽에서 무력화된다.
+   → 팝업에는 유리를 명시적으로 준다 (껍데기가 칠하고 블러도 여기서). */
+/* ⚠️ `:not([class*="user-profile"])` — 프로필 테마가 걸린 팝오버/모달은
+   디스코드가 프로필 색으로 틴트하므로 내가 색을 칠하면 안 된다.
+   (배경 토큰도 위에서 제외했으니, 여기서 칠하면 루트의 **어두운** 값이
+    밝은 모달에 깔려 글자가 안 보이게 된다.)
+   모양(곡률/테두리/그림자)은 아래 규칙에서 프로필 테마에도 그대로 준다. */
+[class*="layerContainer_"] [class*="outer_"][data-cup-banner]:not(.theme-light) {
+	background-color: var(--panel-pop) !important;
+	background-image: var(--glass-tint) !important;
+	-webkit-backdrop-filter: var(--glass-blur);
+	backdrop-filter: var(--glass-blur);
+}
+
+[class*="layerContainer_"] [class*="outer_"][data-cup-banner] {
+	border-radius: var(--r-lg) !important;
+	border: 1px solid var(--edge-side) !important;
+	border-top-color: var(--edge-top) !important;
+	border-bottom-color: var(--edge-bottom) !important;
+	box-shadow: var(--glass-depth), var(--glass-specular) !important;
+	/* ⚠️ overflow:hidden 을 쓰면 안 된다 — 아래 "잘림" 항목 참고.
+	   이 선택자는 전체 프로필 모달의 outer_ 에도 걸린다 (962x780 실측). */
+	overflow-x: hidden;
+	overflow-y: auto;
+}
+
+/* ── 빠른 이동(Ctrl+K) 정리 ──────────────────────────────────
+   실측 클래스: quickswitcher_ac6cb0 / input_ac6cb0 / scroller_ac6cb0 /
+                resultsArea_ac6cb0 / protip__432f4 / footer__432f4
+   문제였던 것: 유리 컨테이너(20px) 안에 검색 인풋이 또 자기 배경 + 16px 곡률 +
+   보더를 갖고 있어 둥근 상자가 이중으로 겹쳐 보였다.
+   → 유리 면은 컨테이너 하나만 두고 인풋은 투명한 "입력줄"로 만든다. */
+[class*="quickswitcher_"] {
+	overflow: hidden;
+}
+
+[class*="quickswitcher_"] > [class*="input_"],
+[class*="quickswitcher_"] input {
+	background: transparent !important;
+	border: none !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+	border-bottom: 1px solid var(--hair) !important;
+}
+
+[class*="quickswitcher_"] > [class*="input_"]:focus,
+[class*="quickswitcher_"] input:focus,
+[class*="quickswitcher_"] input:focus-visible {
+	outline: none !important;
+	border-color: transparent !important;
+	border-bottom-color: var(--hair-hi) !important;
+	box-shadow: none !important;
+}
+
+/* 결과 항목 · 하단 참고줄 */
+[class*="quickswitcher_"] [class*="resultsArea_"] > * {
+	border-radius: var(--r-sm) !important;
+}
+
+[class*="quickswitcher_"] [class*="protip_"],
+[class*="quickswitcher_"] [class*="footer_"] {
+	background: transparent !important;
+	border-top: 1px solid var(--hair) !important;
+}
+
+[class*="tooltip_"] {
+	border-radius: var(--r-md) !important;
+}
+
+[class*="tooltipPointer_"] {
+	display: none !important;
+}
+
+/* :not(:has(라이트박스)) — 이미지 확대 뷰어는 애초에 글래스를 걸지 않는다.
+   배경을 나중에 transparent 로 덮으면 라이트박스의 검은 배경까지 지워져
+   디스코드 UI 가 그대로 비쳐 보인다. 그래서 "적용 자체를 제외"한다. */
+/* ⚠️ :not([class*="carousel"]) 가 반드시 필요하다.
+   [class*="modal_"] 가 이미지 뷰어의 carouselModal_ 까지 잡는데,
+   이 셀렉터는 :not(:has(...)) 때문에 특이도가 (0,2,0) 이라
+   뒤에서 [class*="carouselModal"] (0,1,0) 로 덮어쓰려 해도 이긴다.
+   → 덮어쓰기로 싸우지 말고 애초에 매칭에서 뺀다. */
+[role="dialog"] [class*="root_"]:not([data-cup-lb]),
+[class*="modal_"]:not([data-cup-lb]):not([class*="carousel"]) {
+	background-color: var(--panel-modal) !important;
+	background-image: var(--glass-tint) !important;
+	-webkit-backdrop-filter: var(--glass-blur);
+	backdrop-filter: var(--glass-blur);
+	border: 1px solid var(--edge-side) !important;
+	border-top-color: var(--edge-top) !important;
+	border-bottom-color: var(--edge-bottom) !important;
+	border-radius: var(--r-xl) !important;
+	box-shadow: var(--glass-depth), var(--glass-specular) !important;
+	/* ⚠️⚠️ "아래 여백이 없네" 의 원인이 바로 이 한 줄(overflow:hidden)이었다.
+	   전체 프로필 모달을 780px 창에서 실측한 결과:
+	     focusLock__49fc1   964x732   overflow-y: visible   내용 756 → 24px 넘침
+	     root_b92f52 (여기) 966x780   overflow-y: hidden    ← 넘친 걸 잘라냄
+	   디스코드의 실제 스크롤 컨테이너(focusLock)가 visible 이라 내용이 밖으로
+	   넘치는 구조인데, 내가 곡률을 깎으려고 부모에 hidden 을 걸어서
+	   넘친 부분이 스크롤도 안 되고 그냥 사라졌다 (스크롤바조차 없었다).
+	   → 가로만 막고 세로는 auto. auto 는 넘칠 때만 스크롤바를 만들므로
+	     여유 있는 창에서는 지금과 똑같이 보인다. */
+	overflow-x: hidden;
+	overflow-y: auto;
+}
+
+[class*="backdrop_"] {
+	-webkit-backdrop-filter: blur(4px);
+	backdrop-filter: blur(4px);
+}
+
+[role="dialog"] [class*="header_"] {
+	box-shadow: none !important;
+	border-bottom: 1px solid var(--hair);
+}
+
+[role="dialog"] [class*="footer_"] {
+	box-shadow: none !important;
+	border-top: 1px solid var(--hair);
+	background: transparent !important;
+}
+
+/* ⚠️ 입력창을 품은 푸터에는 구분선을 넣지 말 것.
+   실측(프로필 팝업): footer__5be3e 의 border-top 이 입력 알약(y=809) **바로
+   1px 위**(y=808)에 붙어서, 선과 알약이 겹쳐 보이며 답답했다. 이미 알약이
+   테두리를 갖고 있으니 그 위 선은 중복이고 여백이 없어 어긋나 보인다.
+   → 선을 지운다. 여백(디스코드의 padding 0 16px 12px)은 건드리지 않는다. */
+[role="dialog"] [class*="footer_"][data-cup-tafooter],
+[class*="outer_"] [class*="footer_"][data-cup-tafooter] {
+	border-top: none !important;
+	box-shadow: none !important;
+}
+
+/* 설정 화면은 글이 많아 글래스에서 제외
+   ⚠️ 성능: 예전엔 `[class*="standardSidebarView"] *` 였다. 브라우저는 셀렉터를
+   오른쪽부터 맞추므로 이건 "문서의 모든 요소마다 조상 사슬을 거슬러 올라가
+   부분일치 검사" 가 되어, 스타일 재계산이 일어날 때마다 비용을 문다.
+   (custom.css 에서 같은 패턴을 걷어내 45ms → 15ms 로 줄인 적이 있다.)
+   → 실제로 블러가 걸릴 수 있는 후보만 이름으로 지목한다. */
+[class*="standardSidebarView"],
+[class*="standardSidebarView"] [class*="page_"],
+[class*="standardSidebarView"] [class*="bar_"],
+[class*="standardSidebarView"] [class*="panels_"],
+[class*="standardSidebarView"] [class*="sidebar_"],
+[class*="standardSidebarView"] [class*="container__"],
+[class*="standardSidebarView"] [class*="outer_"],
+[class*="standardSidebarView"] [class*="root_"] {
+	-webkit-backdrop-filter: none !important;
+	backdrop-filter: none !important;
+}
+
+/* 토스트 — 모양만 (여백은 기본) */
+/* 토스트는 블러가 실제로 되는 유일한 레이어 → 진짜 유리 + 틴트까지 */
+[class*="toast_"],
+.bd-toast {
+	background-color: var(--glass-pop) !important;
+	background-image: var(--glass-tint) !important;
+	-webkit-backdrop-filter: var(--glass-blur) !important;
+	backdrop-filter: var(--glass-blur) !important;
+	border: 1px solid var(--edge-side) !important;
+	border-top-color: var(--edge-top) !important;
+	border-bottom-color: var(--edge-bottom) !important;
+	border-radius: var(--r-lg) !important;
+	box-shadow: var(--glass-depth), var(--glass-specular) !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   6. 메시지 내용물 · 카드
+   ══════════════════════════════════════════════════════════ */
+
+[class*="embedFull_"],
+[class*="embedWrapper"],
+[class*="attachment_"],
+[class*="imageWrapper"],
+[class*="clickableWrapper"],
+pre,
+[class*="codeContainer"] {
+	border-radius: var(--r-md) !important;
+	border-color: var(--hair) !important;
+}
+
+/* ── 이미지 확대 뷰어(라이트박스) 예외 ────────────────────────────
+   실측 클래스: lightbox__40128 / imageWrapper_af017a / imageZoom_af017a /
+                imageWrapperBackground_af017a / carousel_ed6d69
+
+   ⚠️ 여기서 background 를 건드리면 안 된다. 라이트박스의 어두운 배경까지
+   지워져서 뒤의 디스코드 UI 가 그대로 비쳐 보인다 (실제로 그랬다).
+   모양(곡률/보더)만 원래대로 돌리고 배경·블러는 디스코드에 맡긴다.
+   모달 글래스는 위쪽 :not(:has(...)) 로 이미 제외돼 있다. */
+[class*="lightbox"] [class*="imageWrapper"],
+[class*="imageWrapperBackground"],
+[class*="imageZoom"],
+[class*="carouselMaxWidth"] {
+	border: none !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+}
+
+/* ⚠️⚠️ 이미지 뷰어의 캐러셀 모달 — "여백이 이상하다" 의 진짜 원인이었다.
+   실측: carouselModal_d3a6f0 이 2396x1086@24,36 크기로
+   background rgba(27,29,34,0.8) + blur(28px) 을 물고 있었다.
+   = 내 모달 유리 스타일이 여기 걸려서 이미지 뒤에 "밝은 둥근 사각형" 이 생겼다.
+   스크림(scrim__40128 lightbox__40128)은 layerContainer 아래의 **형제** 요소라
+   :has([class*="lightbox"]) 예외가 이 모달에는 닿지 않는다.
+   → 이름으로 직접 지목해 완전히 걷어낸다.
+
+   같은 속성 선택자를 세 번 반복해 특이도를 (0,3,0) 으로 올린다.
+   모달 규칙이 :not(:has(...)) 때문에 (0,2,0) 이라 한 번만 쓰면 진다.
+   (실제로 [class*="carouselModal"] (0,1,0) 로는 덮이지 않았다)
+
+   ⚠️ 여기를 transparent 로 만들면 안 된다. carouselModal 은 스크림보다 **위**
+   계층이라, 투명하게 하면 스크림이 아니라 앱이 그대로 비친다 (실제로 그랬다).
+   이 요소 자체가 어둡게 덮는 역할을 해야 하므로 스크림과 같은 어두운 배경을 준다.
+   유리 스타일(보더/라운드/그림자)만 걷어내고, 블러는 오히려 살린다 —
+   스크림과 이 층이 각각 블러를 얹어 두 겹이 되면 뒤 UI 의 형태가
+   완전히 사라지므로, 낮은 알파에서도 카드 무늬가 드러나지 않는다. */
+[class*="carouselModal"][class*="carouselModal"][class*="carouselModal"] {
+	background: rgba(0, 0, 0, 0.34) !important;
+	background-image: none !important;
+	-webkit-backdrop-filter: blur(36px) saturate(110%) !important;
+	backdrop-filter: blur(36px) saturate(110%) !important;
+	border: none !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+}
+
+[class*="carousel_"][class*="carousel_"][class*="carousel_"] {
+	background: transparent !important;
+	background-image: none !important;
+	-webkit-backdrop-filter: none !important;
+	backdrop-filter: none !important;
+	border: none !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+}
+
+[class*="markup_"] code {
+	border-radius: var(--r-xs) !important;
+	border: 1px solid var(--hair) !important;
+}
+
+[class*="reaction_"] {
+	border-radius: 999px !important;
+	border: 1px solid var(--hair) !important;
+}
+
+[class*="reaction_"][class*="reactionMe"] {
+	border-color: var(--t-blue) !important;
+	background: var(--t-blue-tint) !important;
+}
+
+[class*="spine_"] {
+	border-color: var(--hair-hi) !important;
+}
+
+/* 카드 곡률.
+   ⚠️ [class*="peopleColumn_"] > * / [class*="nowPlayingColumn_"] > * 로 잡으면
+   안 된다. 실측에서 전체폭 검색바(1517x42)와 전체높이 목록(1557x993),
+   활동 패널 전체(420x1055)까지 18px 곡률을 먹어 14px 카드들과 어긋났다.
+   → 진짜 카드 클래스만 잡는다. */
+[class*="card_"] {
+	border-radius: var(--r-lg) !important;
+	border-color: var(--hair) !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   7. 스크롤바 — 얇은 오버레이
+   ══════════════════════════════════════════════════════════ */
+
+::-webkit-scrollbar {
+	width: 10px !important;
+	height: 10px !important;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-track-piece,
+::-webkit-scrollbar-corner,
+::-webkit-scrollbar-button {
+	background: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+	display: none !important;
+}
+
+::-webkit-scrollbar-thumb {
+	background: rgba(255, 255, 255, 0.16) !important;
+	background-clip: padding-box !important;
+	border: 3px solid transparent !important;
+	border-radius: 999px !important;
+	min-height: 32px;
+	box-shadow: none !important;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: rgba(255, 255, 255, 0.3) !important;
+	background-clip: padding-box !important;
+}
+
+::-webkit-scrollbar-thumb:active {
+	background: rgba(255, 255, 255, 0.4) !important;
+	background-clip: padding-box !important;
+}
+
+[class*="scrollerTrack"] {
+	background: transparent !important;
+}
+
+/* ⚠️ 디스코드가 "스크롤바 숨김"으로 지정한 스크롤러(none_)는 건드리지 않는다.
+   안 그러면 서버 레일에 스크롤도 안 되는 유령 스크롤바가 10px 자리를 먹는다. */
+[class*="none_"]::-webkit-scrollbar,
+[class*="none_"]::-webkit-scrollbar-thumb,
+[class*="none_"]::-webkit-scrollbar-track {
+	display: none !important;
+	width: 0 !important;
+	height: 0 !important;
+	background: transparent !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   8. BD 자체 UI
+   ══════════════════════════════════════════════════════════ */
+
+.bd-modal-wrapper .bd-modal {
+	border-radius: var(--r-xl) !important;
+}
+
+.bd-addon-card {
+	border-radius: var(--r-lg) !important;
+	border: 1px solid var(--hair) !important;
+}
+
+.bd-button {
+	border-radius: var(--r-md) !important;
+}
